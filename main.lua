@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
 
 local player = Players.LocalPlayer
@@ -199,9 +200,10 @@ local function selectTab(name)
     end
 end
 
-local tabNames = { "Server", "NPC", "Island" }
+local tabNames = { "Server", "Hop", "NPC", "Island" }
 local tabTitles = {
     Server = "🌐  Server",
+    Hop = "🔀  Hop",
     NPC = "👤  NPC",
     Island = "🏝  Island",
 }
@@ -377,6 +379,241 @@ rejoinButton.MouseButton1Click:Connect(function()
     end)
     if not ok then
         setStatus("Error: " .. tostring(err), "error")
+    end
+end)
+
+----------------------------------------------------------------
+-- HOP PAGE (Random server hop)
+----------------------------------------------------------------
+local hopPage = pages.Hop
+
+-- Settings
+local AUTO_INTERVAL = 30
+local MAX_PAGES = 5
+
+local autoEnabled = false
+local busy = false
+local lastHop = 0
+local visited = {}
+
+label(hopPage, "RANDOM SERVER HOP", UDim2.fromOffset(14, 12),
+    UDim2.new(1, -28, 0, 16), 11, C.muted, true)
+
+local hopCard = create("Frame", {
+    Position = UDim2.fromOffset(14, 34),
+    Size = UDim2.new(1, -28, 0, 72),
+    BackgroundColor3 = C.panel,
+    BorderSizePixel = 0,
+}, hopPage)
+corner(hopCard, 8)
+stroke(hopCard)
+
+label(hopCard, "Current", UDim2.fromOffset(12, 8), UDim2.fromOffset(70, 20), 12, C.muted)
+local serverLabel = label(hopCard, game.JobId ~= "" and game.JobId or "Unavailable",
+    UDim2.fromOffset(84, 8), UDim2.new(1, -96, 0, 20), 12, C.text)
+
+label(hopCard, "Target", UDim2.fromOffset(12, 40), UDim2.fromOffset(70, 20), 12, C.muted)
+local targetLabel = label(hopCard, "-",
+    UDim2.fromOffset(84, 40), UDim2.new(1, -96, 0, 20), 12, C.text)
+
+local hopButton = button(hopPage, "HOP NOW",
+    UDim2.fromOffset(14, 118), UDim2.new(1, -28, 0, 40), C.accent)
+hopButton.TextSize = 14
+
+local autoButton = button(hopPage, "AUTO HOP: OFF",
+    UDim2.fromOffset(14, 166), UDim2.new(1, -28, 0, 38), C.ok)
+
+local intervalLabel = label(hopPage, "Auto interval: " .. AUTO_INTERVAL .. " seconds",
+    UDim2.fromOffset(14, 214), UDim2.new(1, -28, 0, 20), 11, C.muted)
+
+----------------------------------------------------------------
+-- Server discovery
+----------------------------------------------------------------
+local function getServers()
+    local candidates = {}
+    local cursor = nil
+
+    for page = 1, MAX_PAGES do
+        local url =
+            "https://games.roblox.com/v1/games/"
+            .. tostring(game.PlaceId)
+            .. "/servers/Public?limit=100&sortOrder=2"
+
+        if cursor then
+            url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
+        end
+
+        local response = game:HttpGet(url)
+        local data = HttpService:JSONDecode(response)
+
+        if type(data) ~= "table" then
+            error("Invalid server-list response")
+        end
+
+        for _, server in ipairs(data.data or {}) do
+            local id = server.id
+            local playing = tonumber(server.playing) or 0
+            local capacity = tonumber(server.maxPlayers) or 0
+
+            if type(id) == "string"
+                and id ~= ""
+                and id ~= game.JobId
+                and not visited[id]
+                and capacity > 0
+                and playing < capacity then
+                table.insert(candidates, id)
+            end
+        end
+
+        cursor = data.nextPageCursor
+        if not cursor or cursor == "" then
+            break
+        end
+
+        task.wait(0.2)
+    end
+
+    return candidates
+end
+
+----------------------------------------------------------------
+-- Hop logic
+----------------------------------------------------------------
+local function hopNow()
+    if busy then
+        setStatus("Already searching...", "warn")
+        return
+    end
+
+    if os.clock() - lastHop < 5 then
+        setStatus("Please wait before retrying.", "warn")
+        return
+    end
+
+    busy = true
+    lastHop = os.clock()
+    hopButton.Text = "SEARCHING..."
+    setStatus("Fetching public servers...", "info")
+
+    task.spawn(function()
+        local ok, candidates = pcall(getServers)
+
+        if not ok then
+            setStatus("HTTP error: " .. tostring(candidates), "error")
+            busy = false
+            hopButton.Text = "HOP NOW"
+            return
+        end
+
+        -- Reset visited IDs if no candidates remain
+        if #candidates == 0 and next(visited) ~= nil then
+            visited = {}
+            ok, candidates = pcall(getServers)
+
+            if not ok then
+                setStatus("Retry failed: " .. tostring(candidates), "error")
+                busy = false
+                hopButton.Text = "HOP NOW"
+                return
+            end
+        end
+
+        if #candidates == 0 then
+            setStatus("No available server found.", "warn")
+            busy = false
+            hopButton.Text = "HOP NOW"
+            return
+        end
+
+        local jobId = candidates[math.random(1, #candidates)]
+        visited[jobId] = true
+
+        targetLabel.Text = jobId
+        setStatus(
+            "Found " .. #candidates .. " servers. Teleporting...",
+            "info"
+        )
+
+        hopButton.Text = "TELEPORTING..."
+
+        local teleportOK, teleportError = pcall(function()
+            TeleportService:TeleportToPlaceInstance(
+                game.PlaceId,
+                jobId,
+                player
+            )
+        end)
+
+        if not teleportOK then
+            setStatus("Teleport error: " .. tostring(teleportError), "error")
+            busy = false
+            hopButton.Text = "HOP NOW"
+            return
+        end
+
+        setStatus("Teleport requested; waiting for Roblox...", "ok")
+
+        -- Unlock if the teleport does not happen
+        task.delay(15, function()
+            if busy and gui.Parent then
+                busy = false
+                hopButton.Text = "HOP NOW"
+                setStatus("Still here? Check teleport errors.", "warn")
+            end
+        end)
+    end)
+end
+
+hopButton.MouseButton1Click:Connect(hopNow)
+
+----------------------------------------------------------------
+-- Auto hop toggle
+----------------------------------------------------------------
+autoButton.MouseButton1Click:Connect(function()
+    autoEnabled = not autoEnabled
+
+    autoButton.Text = autoEnabled and "AUTO HOP: ON" or "AUTO HOP: OFF"
+    setButtonColor(autoButton, autoEnabled and C.danger or C.ok)
+
+    setStatus(
+        autoEnabled
+            and "Auto hop enabled."
+            or "Auto hop disabled.",
+        autoEnabled and "ok" or nil
+    )
+end)
+
+task.spawn(function()
+    while gui.Parent do
+        task.wait(1)
+
+        if autoEnabled and not busy then
+            local remaining = AUTO_INTERVAL - (os.clock() - lastHop)
+
+            if remaining <= 0 then
+                hopNow()
+            end
+        end
+    end
+end)
+
+----------------------------------------------------------------
+-- Teleport failure handling
+----------------------------------------------------------------
+connect(TeleportService.TeleportInitFailed, function(
+    failedPlayer, result, errorMessage
+)
+    if failedPlayer == player then
+        busy = false
+
+        if gui.Parent then
+            hopButton.Text = "HOP NOW"
+            setStatus(
+                "Teleport failed: " .. tostring(result)
+                    .. " / " .. tostring(errorMessage),
+                "error"
+            )
+        end
     end
 end)
 
@@ -1134,6 +1371,7 @@ minimize.MouseButton1Click:Connect(function()
 end)
 
 local function destroyGui()
+    autoEnabled = false
     for _, c in ipairs(connections) do
         c:Disconnect()
     end
