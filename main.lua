@@ -1,22 +1,36 @@
+--========================================================
+-- CHU TIANJIAO AUTO HOP + ISLAND TELEPORT
+--========================================================
+
 local Players = game:GetService("Players")
-local TeleportService = game:GetService("TeleportService")
-local UserInputService = game:GetService("UserInputService")
-local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 
 local player = Players.LocalPlayer
-local guiParent = game:GetService("CoreGui")
+local PLACE_ID = game.PlaceId
 
-local oldGui = guiParent:FindFirstChild("UniversalServerJoiner")
+local enabled = false
+local running = false
+local visited = {}
+
+local KNOWN_DIALOGUES = {
+    ["I can feel it. Something is approaching"] = true,
+    ["This sea... still bears no trace of the Four Sacred Beasts"] = true,
+}
+
+local oldGui = CoreGui:FindFirstChild("ChuTianjiaoAutoHop")
 if oldGui then
     oldGui:Destroy()
 end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "UniversalServerJoiner"
+gui.Name = "ChuTianjiaoAutoHop"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
-gui.Parent = guiParent
 
 ----------------------------------------------------------------
 -- Theme
@@ -35,13 +49,6 @@ local C = {
     ok = Color3.fromRGB(90, 190, 120),
     warn = Color3.fromRGB(230, 180, 80),
     border = Color3.fromRGB(52, 55, 64),
-}
-
-local CATEGORY_COLORS = {
-    Boss = Color3.fromRGB(205, 85, 85),
-    Shop = Color3.fromRGB(95, 185, 120),
-    Quest = Color3.fromRGB(225, 180, 75),
-    Function = Color3.fromRGB(110, 150, 215),
 }
 
 local connections = {}
@@ -68,7 +75,7 @@ local function corner(obj, radius)
 end
 
 local function stroke(obj, color)
-    create("UIStroke", {
+    return create("UIStroke", {
         Color = color or C.border,
         Thickness = 1,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
@@ -147,7 +154,7 @@ end
 ----------------------------------------------------------------
 -- Main window
 ----------------------------------------------------------------
-local WIDTH, HEIGHT = 460, 520
+local WIDTH, HEIGHT = 440, 480
 local TITLE_H, TAB_H, STATUS_H = 40, 38, 32
 
 local frame = create("Frame", {
@@ -168,7 +175,7 @@ local titleBar = create("Frame", {
     Active = true,
 }, frame)
 
-label(titleBar, "Universal Server Joiner", UDim2.fromOffset(14, 0),
+label(titleBar, "Chu Tianjiao Auto Hop", UDim2.fromOffset(14, 0),
     UDim2.new(1, -110, 1, 0), 14, C.text, true)
 
 local minimize = button(titleBar, "–",
@@ -186,10 +193,8 @@ local tabBar = create("Frame", {
 
 local tabButtons = {}
 local pages = {}
-local activeTab = "Server"
 
 local function selectTab(name)
-    activeTab = name
     for tabName, b in pairs(tabButtons) do
         local active = tabName == name
         setButtonColor(b, active and C.accent or C.header)
@@ -200,11 +205,9 @@ local function selectTab(name)
     end
 end
 
-local tabNames = { "Server", "Hop", "NPC", "Island" }
+local tabNames = { "AutoHop", "Island" }
 local tabTitles = {
-    Server = "🌐  Server",
-    Hop = "🔀  Hop",
-    NPC = "👤  NPC",
+    AutoHop = "🤖  CHU TIANJIAO AUTO HOP",
     Island = "🏝  Island",
 }
 for i, name in ipairs(tabNames) do
@@ -247,7 +250,7 @@ local statusDot = create("Frame", {
 }, statusBar)
 corner(statusDot, 5)
 
-local statusText = label(statusBar, "Ready.", UDim2.fromOffset(30, 0),
+local statusText = label(statusBar, "Idle.", UDim2.fromOffset(30, 0),
     UDim2.new(1, -40, 1, 0), 12, C.muted)
 
 local function setStatus(text, kind)
@@ -267,813 +270,413 @@ local function setStatus(text, kind)
 end
 
 ----------------------------------------------------------------
--- SERVER PAGE
+-- AUTO HOP PAGE (UI)
 ----------------------------------------------------------------
-local serverPage = pages.Server
+local hopPage = pages.AutoHop
 
-label(serverPage, "JOIN SERVER BY JOBID", UDim2.fromOffset(14, 12),
+label(hopPage, "AUTO HOP", UDim2.fromOffset(14, 12),
+    UDim2.new(0.5, -18, 0, 16), 11, C.muted, true)
+label(hopPage, "DELAY BEFORE HOP (SEC)", UDim2.new(0.5, 4, 0, 12),
+    UDim2.new(0.5, -18, 0, 16), 11, C.muted, true)
+
+local toggle = button(hopPage, "AUTO HOP: OFF",
+    UDim2.fromOffset(14, 34), UDim2.new(0.5, -18, 0, 40), C.ok)
+
+local delayBox = textBox(hopPage, "Delay seconds",
+    UDim2.new(0.5, 4, 0, 34), UDim2.new(0.5, -18, 0, 40))
+delayBox.Text = "10"
+
+label(hopPage, "CURRENT SERVER", UDim2.fromOffset(14, 92),
     UDim2.new(1, -28, 0, 16), 11, C.muted, true)
 
-local jobInput = textBox(serverPage, "Paste server JobId here...",
-    UDim2.fromOffset(14, 34), UDim2.new(1, -28, 0, 38))
-
-local joinButton = button(serverPage, "JOIN SERVER",
-    UDim2.fromOffset(14, 80), UDim2.new(1, -28, 0, 40), C.accent)
-joinButton.TextSize = 14
-
--- Current server card
-label(serverPage, "CURRENT SERVER", UDim2.fromOffset(14, 138),
-    UDim2.new(1, -28, 0, 16), 11, C.muted, true)
-
-local infoCard = create("Frame", {
-    Position = UDim2.fromOffset(14, 160),
-    Size = UDim2.new(1, -28, 0, 96),
-    BackgroundColor3 = C.panel,
-    BorderSizePixel = 0,
-}, serverPage)
-corner(infoCard, 8)
-stroke(infoCard)
-
-local function infoRow(y, title)
-    label(infoCard, title, UDim2.fromOffset(12, y), UDim2.fromOffset(70, 20), 12, C.muted)
-    return label(infoCard, "-", UDim2.fromOffset(84, y),
-        UDim2.new(1, -96, 0, 20), 12, C.text)
-end
-
-local placeValue = infoRow(8, "PlaceId")
-local jobValue = infoRow(36, "JobId")
-local playersValue = infoRow(64, "Players")
-
-local function refreshServerInfo()
-    placeValue.Text = tostring(game.PlaceId)
-    jobValue.Text = game.JobId ~= "" and game.JobId or "(Studio / none)"
-    playersValue.Text = #Players:GetPlayers() .. " / " .. Players.MaxPlayers
-end
-refreshServerInfo()
-connect(Players.PlayerAdded, refreshServerInfo)
-connect(Players.PlayerRemoving, function()
-    task.defer(refreshServerInfo)
-end)
-
-local copyButton = button(serverPage, "Copy JobId",
-    UDim2.fromOffset(14, 268), UDim2.new(0.5, -18, 0, 36), C.item)
-local rejoinButton = button(serverPage, "Rejoin",
-    UDim2.new(0.5, 4, 0, 268), UDim2.new(0.5, -18, 0, 36), C.item)
-
-local pasteHint = label(serverPage,
-    "Tip: press Enter in the box to join quickly.",
-    UDim2.fromOffset(14, 316), UDim2.new(1, -28, 0, 18), 11, C.muted)
-
-local function joinServer()
-    local jobId = jobInput.Text:match("^%s*(.-)%s*$")
-
-    if jobId == "" then
-        setStatus("Please enter a JobId first.", "warn")
-        return
-    end
-    if jobId == game.JobId then
-        setStatus("You are already in this server.", "warn")
-        return
-    end
-
-    setStatus("Requesting teleport to server...", "info")
-
-    local ok, err = pcall(function()
-        TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, player)
-    end)
-
-    if not ok then
-        setStatus("Error: " .. tostring(err), "error")
-    end
-end
-
-joinButton.MouseButton1Click:Connect(joinServer)
-jobInput.FocusLost:Connect(function(enterPressed)
-    if enterPressed then
-        joinServer()
-    end
-end)
-
-copyButton.MouseButton1Click:Connect(function()
-    if game.JobId == "" then
-        setStatus("No JobId available here.", "warn")
-        return
-    end
-    if setclipboard then
-        setclipboard(game.JobId)
-        setStatus("JobId copied to clipboard.", "ok")
-    else
-        jobInput.Text = game.JobId
-        setStatus("Clipboard unsupported - JobId put in the box.", "warn")
-    end
-end)
-
-rejoinButton.MouseButton1Click:Connect(function()
-    setStatus("Rejoining current server...", "info")
-    local ok, err = pcall(function()
-        if game.JobId ~= "" then
-            TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player)
-        else
-            TeleportService:Teleport(game.PlaceId, player)
-        end
-    end)
-    if not ok then
-        setStatus("Error: " .. tostring(err), "error")
-    end
-end)
-
-----------------------------------------------------------------
--- HOP PAGE (Random server hop)
-----------------------------------------------------------------
-local hopPage = pages.Hop
-
--- Settings
-local AUTO_INTERVAL = 30
-local MAX_PAGES = 5
-
-local autoEnabled = false
-local busy = false
-local lastHop = 0
-local visited = {}
-
-label(hopPage, "RANDOM SERVER HOP", UDim2.fromOffset(14, 12),
-    UDim2.new(1, -28, 0, 16), 11, C.muted, true)
-
-local hopCard = create("Frame", {
-    Position = UDim2.fromOffset(14, 34),
-    Size = UDim2.new(1, -28, 0, 72),
+local jobCard = create("Frame", {
+    Position = UDim2.fromOffset(14, 114),
+    Size = UDim2.new(1, -28, 0, 40),
     BackgroundColor3 = C.panel,
     BorderSizePixel = 0,
 }, hopPage)
-corner(hopCard, 8)
-stroke(hopCard)
+corner(jobCard, 8)
+stroke(jobCard)
 
-label(hopCard, "Current", UDim2.fromOffset(12, 8), UDim2.fromOffset(70, 20), 12, C.muted)
-local serverLabel = label(hopCard, game.JobId ~= "" and game.JobId or "Unavailable",
-    UDim2.fromOffset(84, 8), UDim2.new(1, -96, 0, 20), 12, C.text)
+label(jobCard, "JobId", UDim2.fromOffset(12, 10), UDim2.fromOffset(50, 20), 12, C.muted)
+local job = label(jobCard, game.JobId ~= "" and game.JobId or "(Studio / none)",
+    UDim2.fromOffset(64, 10), UDim2.new(1, -76, 0, 20), 12, C.text)
 
-label(hopCard, "Target", UDim2.fromOffset(12, 40), UDim2.fromOffset(70, 20), 12, C.muted)
-local targetLabel = label(hopCard, "-",
-    UDim2.fromOffset(84, 40), UDim2.new(1, -96, 0, 20), 12, C.text)
+label(hopPage, "NPC DIALOGUE", UDim2.fromOffset(14, 170),
+    UDim2.new(1, -28, 0, 16), 11, C.muted, true)
 
-local hopButton = button(hopPage, "HOP NOW",
-    UDim2.fromOffset(14, 118), UDim2.new(1, -28, 0, 40), C.accent)
-hopButton.TextSize = 14
+local dialogueCard = create("Frame", {
+    Position = UDim2.fromOffset(14, 192),
+    Size = UDim2.new(1, -28, 0, 110),
+    BackgroundColor3 = C.panel,
+    BorderSizePixel = 0,
+}, hopPage)
+corner(dialogueCard, 8)
+local dialogueStroke = stroke(dialogueCard)
 
-local autoButton = button(hopPage, "AUTO HOP: OFF",
-    UDim2.fromOffset(14, 166), UDim2.new(1, -28, 0, 38), C.ok)
+local dialogue = label(dialogueCard, "Waiting for Chu Tianjiao...",
+    UDim2.fromOffset(12, 8), UDim2.new(1, -24, 1, -16), 13, C.text)
+dialogue.TextWrapped = true
+dialogue.TextTruncate = Enum.TextTruncate.None
+dialogue.TextYAlignment = Enum.TextYAlignment.Top
 
-local intervalLabel = label(hopPage, "Auto interval: " .. AUTO_INTERVAL .. " seconds",
-    UDim2.fromOffset(14, 214), UDim2.new(1, -28, 0, 20), 11, C.muted)
+local hopTip = label(hopPage,
+    "Tip: stops automatically when the NPC says something unknown. RightShift hides the window.",
+    UDim2.fromOffset(14, 314), UDim2.new(1, -28, 0, 32), 11, C.muted)
+hopTip.TextWrapped = true
+hopTip.TextTruncate = Enum.TextTruncate.None
+hopTip.TextYAlignment = Enum.TextYAlignment.Top
+
+local function alertDialogue(on)
+    dialogueStroke.Color = on and C.warn or C.border
+    dialogueStroke.Thickness = on and 2 or 1
+end
+
+local function setEnabled(value)
+    enabled = value
+    toggle.Text = value and "AUTO HOP: ON" or "AUTO HOP: OFF"
+    setButtonColor(toggle, value and C.danger or C.ok)
+    tabButtons.AutoHop.Text = value and "🤖  Auto Hop  ●" or tabTitles.AutoHop
+
+    if not value then
+        setStatus("OFF", nil)
+    end
+end
 
 ----------------------------------------------------------------
--- Server discovery
+-- NPC lookup
 ----------------------------------------------------------------
-local function getServers()
+local function findChuNPC()
+    local npcFolder = Workspace:FindFirstChild("NPC")
+    local functionFolder = npcFolder
+        and npcFolder:FindFirstChild("Function")
+
+    return functionFolder
+        and functionFolder:FindFirstChild("Chu Tianjiao")
+end
+
+local function getRoot(object)
+    if not object then
+        return nil
+    end
+
+    if object:IsA("BasePart") then
+        return object
+    end
+
+    if object:IsA("Model") then
+        return object:FindFirstChild("HumanoidRootPart")
+            or object.PrimaryPart
+            or object:FindFirstChildWhichIsA("BasePart", true)
+    end
+
+    return object:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function teleportToChu(npc)
+    local character = player.Character
+    if not character then
+        return false, "Character not loaded"
+    end
+
+    local npcRoot = getRoot(npc)
+    if not npcRoot then
+        return false, "NPC root part not found"
+    end
+
+    character:PivotTo(npcRoot.CFrame * CFrame.new(0, 0, 4))
+    return true
+end
+
+--========================================================
+-- Press E
+--========================================================
+
+local function pressE()
+    local ok, err = pcall(function()
+        VirtualInputManager:SendKeyEvent(
+            true, Enum.KeyCode.E, false, game
+        )
+
+        task.wait(0.15)
+
+        VirtualInputManager:SendKeyEvent(
+            false, Enum.KeyCode.E, false, game
+        )
+    end)
+
+    if not ok then
+        warn("[ChuAutoHop] Press E failed:", err)
+    end
+
+    return ok
+end
+
+--========================================================
+-- Dialogue detection
+--========================================================
+
+local function isVisibleInTree(object)
+    local current = object
+
+    while current and current ~= player.PlayerGui do
+        if current:IsA("GuiObject") and not current.Visible then
+            return false
+        end
+        current = current.Parent
+    end
+
+    return true
+end
+
+local function readDialogue()
+    local pg = player:FindFirstChild("PlayerGui")
+    local mainGui = pg and pg:FindFirstChild("MainGui")
+    local menu = mainGui and mainGui:FindFirstChild("Menu")
+    local frameDialogue = menu and menu:FindFirstChild("Dialogue")
+
+    if not frameDialogue or not isVisibleInTree(frameDialogue) then
+        return nil, nil
+    end
+
+    local body = frameDialogue:FindFirstChild("Dialog")
+    local title = frameDialogue:FindFirstChild("Title")
+
+    if not body or not body:IsA("TextLabel") then
+        return nil, nil
+    end
+
+    if body.Text == "" then
+        return nil, nil
+    end
+
+    local titleText = ""
+    if title and title:IsA("TextLabel") then
+        titleText = title.Text
+    end
+
+    return titleText, body.Text
+end
+
+--========================================================
+-- Public server hopping
+--========================================================
+
+local function hopServer()
+    setStatus("Searching public servers...", "info")
+
+    local cursor = ""
     local candidates = {}
-    local cursor = nil
 
-    for page = 1, MAX_PAGES do
-        local url =
-            "https://games.roblox.com/v1/games/"
-            .. tostring(game.PlaceId)
-            .. "/servers/Public?limit=100&sortOrder=2"
+    for _ = 1, 3 do
+        if not enabled then
+            return false
+        end
 
-        if cursor then
+        local url = "https://games.roblox.com/v1/games/"
+            .. PLACE_ID
+            .. "/servers/Public?sortOrder=Asc&limit=100"
+
+        if cursor ~= "" then
             url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
         end
 
-        local response = game:HttpGet(url)
-        local data = HttpService:JSONDecode(response)
+        local ok, response = pcall(function()
+            return game:HttpGet(url)
+        end)
 
-        if type(data) ~= "table" then
-            error("Invalid server-list response")
+        if not ok then
+            setStatus("Server request failed", "error")
+            return false
+        end
+
+        local decoded, data = pcall(function()
+            return HttpService:JSONDecode(response)
+        end)
+
+        if not decoded or type(data) ~= "table" then
+            setStatus("Invalid server response", "error")
+            return false
         end
 
         for _, server in ipairs(data.data or {}) do
-            local id = server.id
-            local playing = tonumber(server.playing) or 0
-            local capacity = tonumber(server.maxPlayers) or 0
+            if server.id ~= game.JobId
+                and (server.playing or 0) < (server.maxPlayers or 0)
+                and not visited[server.id] then
 
-            if type(id) == "string"
-                and id ~= ""
-                and id ~= game.JobId
-                and not visited[id]
-                and capacity > 0
-                and playing < capacity then
-                table.insert(candidates, id)
+                table.insert(candidates, server.id)
             end
         end
 
-        cursor = data.nextPageCursor
-        if not cursor or cursor == "" then
+        cursor = data.nextPageCursor or ""
+
+        if #candidates > 0 or cursor == "" then
             break
         end
-
-        task.wait(0.2)
     end
 
-    return candidates
-end
-
-----------------------------------------------------------------
--- Hop logic
-----------------------------------------------------------------
-local function hopNow()
-    if busy then
-        setStatus("Already searching...", "warn")
-        return
-    end
-
-    if os.clock() - lastHop < 5 then
-        setStatus("Please wait before retrying.", "warn")
-        return
-    end
-
-    busy = true
-    lastHop = os.clock()
-    hopButton.Text = "SEARCHING..."
-    setStatus("Fetching public servers...", "info")
-
-    task.spawn(function()
-        local ok, candidates = pcall(getServers)
-
-        if not ok then
-            setStatus("HTTP error: " .. tostring(candidates), "error")
-            busy = false
-            hopButton.Text = "HOP NOW"
-            return
-        end
-
-        -- Reset visited IDs if no candidates remain
-        if #candidates == 0 and next(visited) ~= nil then
-            visited = {}
-            ok, candidates = pcall(getServers)
-
-            if not ok then
-                setStatus("Retry failed: " .. tostring(candidates), "error")
-                busy = false
-                hopButton.Text = "HOP NOW"
-                return
-            end
-        end
-
-        if #candidates == 0 then
-            setStatus("No available server found.", "warn")
-            busy = false
-            hopButton.Text = "HOP NOW"
-            return
-        end
-
-        local jobId = candidates[math.random(1, #candidates)]
-        visited[jobId] = true
-
-        targetLabel.Text = jobId
-        setStatus(
-            "Found " .. #candidates .. " servers. Teleporting...",
-            "info"
-        )
-
-        hopButton.Text = "TELEPORTING..."
-
-        local teleportOK, teleportError = pcall(function()
-            TeleportService:TeleportToPlaceInstance(
-                game.PlaceId,
-                jobId,
-                player
-            )
-        end)
-
-        if not teleportOK then
-            setStatus("Teleport error: " .. tostring(teleportError), "error")
-            busy = false
-            hopButton.Text = "HOP NOW"
-            return
-        end
-
-        setStatus("Teleport requested; waiting for Roblox...", "ok")
-
-        -- Unlock if the teleport does not happen
-        task.delay(15, function()
-            if busy and gui.Parent then
-                busy = false
-                hopButton.Text = "HOP NOW"
-                setStatus("Still here? Check teleport errors.", "warn")
-            end
-        end)
-    end)
-end
-
-hopButton.MouseButton1Click:Connect(hopNow)
-
-----------------------------------------------------------------
--- Auto hop toggle
-----------------------------------------------------------------
-autoButton.MouseButton1Click:Connect(function()
-    autoEnabled = not autoEnabled
-
-    autoButton.Text = autoEnabled and "AUTO HOP: ON" or "AUTO HOP: OFF"
-    setButtonColor(autoButton, autoEnabled and C.danger or C.ok)
-
-    setStatus(
-        autoEnabled
-            and "Auto hop enabled."
-            or "Auto hop disabled.",
-        autoEnabled and "ok" or nil
-    )
-end)
-
-task.spawn(function()
-    while gui.Parent do
-        task.wait(1)
-
-        if autoEnabled and not busy then
-            local remaining = AUTO_INTERVAL - (os.clock() - lastHop)
-
-            if remaining <= 0 then
-                hopNow()
-            end
-        end
-    end
-end)
-
-----------------------------------------------------------------
--- Teleport failure handling
-----------------------------------------------------------------
-connect(TeleportService.TeleportInitFailed, function(
-    failedPlayer, result, errorMessage
-)
-    if failedPlayer == player then
-        busy = false
-
-        if gui.Parent then
-            hopButton.Text = "HOP NOW"
-            setStatus(
-                "Teleport failed: " .. tostring(result)
-                    .. " / " .. tostring(errorMessage),
-                "error"
-            )
-        end
-    end
-end)
-
-----------------------------------------------------------------
--- NPC PAGE
-----------------------------------------------------------------
-local npcPage = pages.NPC
-
-local searchBox = textBox(npcPage, "🔍  Search NPC name...",
-    UDim2.fromOffset(14, 10), UDim2.new(1, -116, 0, 34))
-
-local refreshButton = button(npcPage, "↻ Refresh",
-    UDim2.new(1, -96, 0, 10), UDim2.fromOffset(82, 34), C.panel)
-stroke(refreshButton)
-
-local categories = { "All", "Boss", "Shop", "Quest", "Function" }
-local activeCategory = "All"
-local categoryButtons = {}
-
-local categoryFrame = create("Frame", {
-    Position = UDim2.fromOffset(14, 52),
-    Size = UDim2.new(1, -28, 0, 28),
-    BackgroundTransparency = 1,
-}, npcPage)
-create("UIListLayout", {
-    FillDirection = Enum.FillDirection.Horizontal,
-    Padding = UDim.new(0, 5),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-}, categoryFrame)
-
-for i, name in ipairs(categories) do
-    local b = button(categoryFrame, name, UDim2.new(),
-        UDim2.new(1 / #categories, -4, 1, 0),
-        name == activeCategory and C.accent or C.panel)
-    b.TextSize = 12
-    b.LayoutOrder = i
-    categoryButtons[name] = b
-end
-
-local countLabel = label(npcPage, "NPCs: 0  |  Results: 0",
-    UDim2.fromOffset(14, 88), UDim2.new(1, -150, 0, 18), 11, C.muted)
-
-local sortMode = "Name"
-local sortButton = button(npcPage, "Sort: Name",
-    UDim2.new(1, -124, 0, 86), UDim2.fromOffset(110, 22), C.panel)
-sortButton.TextSize = 11
-
-local npcList = create("ScrollingFrame", {
-    Position = UDim2.fromOffset(14, 114),
-    Size = UDim2.new(1, -28, 1, -114 - 100),
-    BackgroundColor3 = C.panel,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 4,
-    ScrollBarImageColor3 = C.muted,
-    CanvasSize = UDim2.new(),
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-}, npcPage)
-corner(npcList, 8)
-stroke(npcList)
-
-create("UIListLayout", {
-    Padding = UDim.new(0, 4),
-    SortOrder = Enum.SortOrder.LayoutOrder,
-}, npcList)
-create("UIPadding", {
-    PaddingTop = UDim.new(0, 6),
-    PaddingLeft = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 10),
-    PaddingBottom = UDim.new(0, 6),
-}, npcList)
-
-local emptyLabel = label(npcPage, "No NPCs to show.",
-    UDim2.fromOffset(14, 150), UDim2.new(1, -28, 0, 30), 13, C.muted)
-emptyLabel.TextXAlignment = Enum.TextXAlignment.Center
-emptyLabel.ZIndex = 0
-emptyLabel.Visible = false
-
-local selectedLabel = label(npcPage, "Selected: none",
-    UDim2.new(0, 14, 1, -88), UDim2.new(1, -28, 0, 20), 12, C.muted)
-
-local teleportButton = button(npcPage, "TELEPORT TO NPC",
-    UDim2.new(0, 14, 1, -62), UDim2.new(1, -134, 0, 38), C.accent)
-teleportButton.TextSize = 14
-
-local cycleButton = button(npcPage, "Next ▸",
-    UDim2.new(1, -112, 1, -62), UDim2.fromOffset(98, 38), C.panel)
-stroke(cycleButton)
-
-local hintLabel = label(npcPage, "Tip: double-click to teleport. Next switches between locations.",
-    UDim2.new(0, 14, 1, -20), UDim2.new(1, -28, 0, 16), 11, C.muted)
-
-----------------------------------------------------------------
--- NPC logic (NPCs with the same name are grouped together)
-----------------------------------------------------------------
-local allNPCs = {}
-local groupedNPCs = {}
-local filteredNPCs = {}
-local selectedNPC = nil
-local selectedGroup = nil
-local locationIndex = 1
-local scanBusy = false
-local rows = {}
-local MAX_ROWS = 250
-
-local function getRoot(model)
-    if not model or not model:IsA("Model") then
-        return nil
-    end
-    return model:FindFirstChild("HumanoidRootPart")
-        or model.PrimaryPart
-        or model:FindFirstChildWhichIsA("BasePart")
-end
-
-local function isNPC(model)
-    if not model:IsA("Model") then
+    if #candidates == 0 then
+        setStatus("No available new server", "warn")
         return false
     end
-    if Players:GetPlayerFromCharacter(model) then
-        return false
-    end
-    return model:FindFirstChildOfClass("Humanoid") ~= nil
-        and getRoot(model) ~= nil
-end
 
-local function getCategory(npc)
-    local name = npc.Name:lower()
-    if name:find("boss", 1, true) then
-        return "Boss"
-    elseif name:find("shop", 1, true)
-        or name:find("buy", 1, true)
-        or name:find("seller", 1, true)
-        or name:find("merchant", 1, true)
-        or name:find("store", 1, true) then
-        return "Shop"
-    elseif name:find("quest", 1, true)
-        or name:find("mission", 1, true) then
-        return "Quest"
-    end
-    return "Function"
-end
+    local serverId = candidates[math.random(1, #candidates)]
+    visited[serverId] = true
 
-local function getPlayerRoot()
-    local character = player.Character
-    return character and character:FindFirstChild("HumanoidRootPart")
-end
-
-local function getDistance(npc)
-    local pr, nr = getPlayerRoot(), getRoot(npc)
-    if pr and nr then
-        return math.floor((pr.Position - nr.Position).Magnitude)
-    end
-    return math.huge
-end
-
--- Distance to the nearest location of a group
-local function getGroupDistance(group)
-    local best = math.huge
-    for _, npc in ipairs(group.locations) do
-        if npc:IsDescendantOf(Workspace) then
-            best = math.min(best, getDistance(npc))
-        end
-    end
-    return best
-end
-
-local function updateSelectedLabel()
-    if selectedGroup and selectedNPC then
-        local count = #selectedGroup.locations
-        selectedLabel.Text = "Selected: " .. selectedGroup.name
-            .. "  |  location " .. locationIndex .. "/" .. count
-        selectedLabel.TextColor3 = C.text
-        cycleButton.Text = count > 1 and "Next ▸" or "1 location"
-    else
-        selectedLabel.Text = "Selected: none"
-        selectedLabel.TextColor3 = C.muted
-        cycleButton.Text = "Next ▸"
-    end
-end
-
-local function setSelected(group, index)
-    selectedGroup = group
-    locationIndex = index or 1
-    selectedNPC = group and group.locations[locationIndex] or nil
-
-    for g, row in pairs(rows) do
-        row.BackgroundColor3 = g == group and C.selected or C.item
-        row:SetAttribute("BaseColor", row.BackgroundColor3)
-    end
-    updateSelectedLabel()
-end
-
-local function teleportToNPC(npc)
-    if not npc or not npc:IsDescendantOf(Workspace) then
-        setStatus("NPC no longer exists. Press Refresh.", "warn")
-        return
-    end
-
-    local targetRoot = getRoot(npc)
-    local character = player.Character
-    if not targetRoot or not character or not getPlayerRoot() then
-        setStatus("NPC or your character root was not found.", "error")
-        return
-    end
+    setStatus("Teleporting to new server...", "info")
 
     local ok, err = pcall(function()
-        character:PivotTo(targetRoot.CFrame * CFrame.new(0, 0, 4))
+        TeleportService:TeleportToPlaceInstance(
+            PLACE_ID,
+            serverId,
+            player
+        )
     end)
 
-    if ok then
-        setStatus("Teleported to " .. npc.Name .. " (" .. locationIndex .. "/"
-            .. (selectedGroup and #selectedGroup.locations or 1) .. ").", "ok")
-    else
-        setStatus("Teleport failed: " .. tostring(err), "error")
-    end
-end
-
-local lastClickGroup, lastClickTime = nil, 0
-
-local function clearList()
-    for _, child in ipairs(npcList:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
-    rows = {}
-end
-
-local function renderList()
-    clearList()
-
-    local total = #filteredNPCs
-    local shown = math.min(total, MAX_ROWS)
-
-    for i = 1, shown do
-        local group = filteredNPCs[i]
-        local count = #group.locations
-        local category = getCategory(group.locations[1])
-        local dist = getGroupDistance(group)
-
-        local row = create("TextButton", {
-            Size = UDim2.new(1, 0, 0, 34),
-            BackgroundColor3 = group == selectedGroup and C.selected or C.item,
-            BorderSizePixel = 0,
-            Text = "",
-            AutoButtonColor = false,
-            LayoutOrder = i,
-        }, npcList)
-        corner(row, 6)
-        row:SetAttribute("BaseColor", row.BackgroundColor3)
-
-        create("Frame", {
-            Size = UDim2.new(0, 3, 1, -12),
-            Position = UDim2.fromOffset(4, 6),
-            BackgroundColor3 = CATEGORY_COLORS[category],
-            BorderSizePixel = 0,
-        }, row)
-
-        local displayName = group.name .. (count > 1 and ("  (x" .. count .. ")") or "")
-        label(row, displayName, UDim2.fromOffset(16, 0),
-            UDim2.new(1, -150, 1, 0), 13, C.text)
-
-        local tag = label(row, category, UDim2.new(1, -128, 0, 0),
-            UDim2.fromOffset(60, 34), 11, CATEGORY_COLORS[category])
-        tag.TextXAlignment = Enum.TextXAlignment.Right
-
-        local distText = dist == math.huge and "-" or (dist .. "m")
-        local distLabel = label(row, distText, UDim2.new(1, -62, 0, 0),
-            UDim2.fromOffset(54, 34), 11, C.muted)
-        distLabel.TextXAlignment = Enum.TextXAlignment.Right
-
-        row.MouseEnter:Connect(function()
-            if group ~= selectedGroup then
-                row.BackgroundColor3 = C.itemHover
-            end
-        end)
-        row.MouseLeave:Connect(function()
-            row.BackgroundColor3 = group == selectedGroup and C.selected or C.item
-        end)
-
-        row.MouseButton1Click:Connect(function()
-            local now = os.clock()
-            local isDouble = lastClickGroup == group and now - lastClickTime < 0.4
-            lastClickGroup, lastClickTime = group, now
-
-            -- Selecting a different group starts at its first location
-            if group ~= selectedGroup then
-                setSelected(group, 1)
-            end
-
-            if isDouble then
-                lastClickGroup = nil
-                teleportToNPC(selectedNPC)
-            else
-                setStatus(count > 1
-                    and (group.name .. ": " .. count .. " locations. Use Next to switch.")
-                    or ("Selected " .. group.name .. "."), "info")
-            end
-        end)
-
-        rows[group] = row
+    if not ok then
+        setStatus("Teleport failed", "error")
+        warn("[ChuAutoHop] Teleport error:", err)
+        return false
     end
 
-    npcList.CanvasPosition = Vector2.zero
-
-    local suffix = total > MAX_ROWS and (" (showing " .. MAX_ROWS .. ")") or ""
-    countLabel.Text = "NPCs: " .. #allNPCs .. "  |  Names: " .. total .. suffix
-    emptyLabel.Visible = total == 0
+    return true
 end
 
-local function updateFilter()
-    local query = searchBox.Text:lower():match("^%s*(.-)%s*$")
-    filteredNPCs = {}
-    local distances = {}
+--========================================================
+-- Main Auto Hop loop
+--========================================================
 
-    for _, group in ipairs(groupedNPCs) do
-        if #group.locations > 0 then
-            local matchesName = query == ""
-                or group.name:lower():find(query, 1, true) ~= nil
-            local matchesCategory = activeCategory == "All"
-                or getCategory(group.locations[1]) == activeCategory
-
-            if matchesName and matchesCategory then
-                table.insert(filteredNPCs, group)
-                distances[group] = getGroupDistance(group)
-            end
-        end
-    end
-
-    table.sort(filteredNPCs, function(a, b)
-        if sortMode == "Distance" and distances[a] ~= distances[b] then
-            return distances[a] < distances[b]
-        end
-        return a.name:lower() < b.name:lower()
-    end)
-end
-
-local function refreshView()
-    updateFilter()
-    renderList()
-end
-
-local function refreshNPCs()
-    if scanBusy then
+local function startAutoHop()
+    if running then
         return
     end
 
-    scanBusy = true
-    refreshButton.Text = "Scanning..."
-    setStatus("Scanning workspace for NPCs...", "info")
+    running = true
 
     task.spawn(function()
-        local found = {}
-        local groups = {}
+        while enabled and gui.Parent do
+            local npc = findChuNPC()
 
-        local ok, err = pcall(function()
-            for i, instance in ipairs(Workspace:GetDescendants()) do
-                if isNPC(instance) then
-                    table.insert(found, instance)
+            if not npc then
+                setStatus("Chu Tianjiao not found", "warn")
+                task.wait(2)
+            else
+                setStatus("Teleporting to NPC...", "info")
 
-                    local name = instance.Name
-                    if not groups[name] then
-                        groups[name] = { name = name, locations = {} }
+                local tpOK, tpError = teleportToChu(npc)
+
+                if not tpOK then
+                    setStatus(tostring(tpError), "warn")
+                    task.wait(2)
+                else
+                    task.wait(0.7)
+
+                    setStatus("Sending E...", "info")
+                    local eOK = pressE()
+
+                    if not eOK then
+                        setStatus("Failed to send E", "error")
+                    else
+                        setStatus("E sent; waiting dialogue...", "info")
                     end
-                    table.insert(groups[name].locations, instance)
-                end
-                if i % 2000 == 0 then
-                    task.wait()
-                end
-            end
-        end)
 
-        if ok then
-            allNPCs = found
-            groupedNPCs = {}
+                    local titleText, bodyText
 
-            for _, group in pairs(groups) do
-                table.sort(group.locations, function(a, b)
-                    return a:GetFullName() < b:GetFullName()
-                end)
-                table.insert(groupedNPCs, group)
-            end
+                    for _ = 1, 30 do
+                        if not enabled then
+                            break
+                        end
 
-            table.sort(groupedNPCs, function(a, b)
-                return a.name:lower() < b.name:lower()
-            end)
+                        titleText, bodyText = readDialogue()
 
-            -- Keep the previous selection (by name) if it still exists
-            local previousName = selectedGroup and selectedGroup.name
-            local previousIndex = locationIndex
-            selectedGroup, selectedNPC = nil, nil
+                        if bodyText then
+                            break
+                        end
 
-            if previousName then
-                for _, group in ipairs(groupedNPCs) do
-                    if group.name == previousName then
-                        selectedGroup = group
-                        locationIndex = math.min(previousIndex, #group.locations)
-                        selectedNPC = group.locations[locationIndex]
+                        task.wait(0.5)
+                    end
+
+                    if not enabled then
                         break
                     end
+
+                    if not bodyText then
+                        setStatus("Dialogue not detected", "warn")
+                        task.wait(2)
+                    else
+                        dialogue.Text = "NPC: " .. tostring(titleText)
+                            .. "\n" .. tostring(bodyText)
+
+                        job.Text = game.JobId
+
+                        if not KNOWN_DIALOGUES[bodyText] then
+                            setEnabled(false)
+                            alertDialogue(true)
+                            setStatus("Stopped: Unknown dialogue", "warn")
+                            break
+                        end
+
+                        local delaySeconds = tonumber(delayBox.Text) or 10
+                        delaySeconds = math.clamp(
+                            math.floor(delaySeconds), 1, 300
+                        )
+
+                        local cancelled = false
+
+                        for remaining = delaySeconds, 1, -1 do
+                            if not enabled then
+                                cancelled = true
+                                break
+                            end
+
+                            setStatus("Hopping in "
+                                .. remaining .. " seconds", "info")
+
+                            task.wait(1)
+
+                            local _, currentBody = readDialogue()
+
+                            if currentBody and currentBody ~= bodyText then
+                                dialogue.Text =
+                                    "NPC dialogue changed:\n" .. currentBody
+
+                                if not KNOWN_DIALOGUES[currentBody] then
+                                    setEnabled(false)
+                                    alertDialogue(true)
+                                    setStatus("Stopped: Unknown dialogue", "warn")
+                                    cancelled = true
+                                    break
+                                end
+
+                                cancelled = true
+                                break
+                            end
+                        end
+
+                        if not enabled then
+                            break
+                        end
+
+                        if not cancelled then
+                            hopServer()
+                            task.wait(5)
+                        end
+                    end
                 end
             end
-
-            refreshView()
-            updateSelectedLabel()
-            setStatus("Scan complete: " .. #found .. " NPC(s), "
-                .. #groupedNPCs .. " unique name(s).", "ok")
-        else
-            setStatus("Scan failed: " .. tostring(err), "error")
         end
 
-        refreshButton.Text = "↻ Refresh"
-        scanBusy = false
+        running = false
     end)
 end
 
--- Events
-for name, b in pairs(categoryButtons) do
-    b.MouseButton1Click:Connect(function()
-        activeCategory = name
-        for category, item in pairs(categoryButtons) do
-            setButtonColor(item, category == activeCategory and C.accent or C.panel)
-        end
-        refreshView()
-    end)
-end
+toggle.MouseButton1Click:Connect(function()
+    setEnabled(not enabled)
 
-connect(searchBox:GetPropertyChangedSignal("Text"), refreshView)
-refreshButton.MouseButton1Click:Connect(refreshNPCs)
-
-sortButton.MouseButton1Click:Connect(function()
-    sortMode = sortMode == "Name" and "Distance" or "Name"
-    sortButton.Text = "Sort: " .. sortMode
-    refreshView()
-end)
-
-cycleButton.MouseButton1Click:Connect(function()
-    if not selectedGroup then
-        setStatus("Select an NPC from the list first.", "warn")
-        return
+    if enabled then
+        alertDialogue(false)
+        startAutoHop()
     end
-
-    local count = #selectedGroup.locations
-    if count <= 1 then
-        setStatus("This NPC has only one location.", "info")
-        return
-    end
-
-    locationIndex = locationIndex % count + 1
-    selectedNPC = selectedGroup.locations[locationIndex]
-    updateSelectedLabel()
-    setStatus("Location " .. locationIndex .. "/" .. count
-        .. " selected. Press TELEPORT.", "info")
-end)
-
-teleportButton.MouseButton1Click:Connect(function()
-    if not selectedNPC then
-        setStatus("Select an NPC from the list first.", "warn")
-        return
-    end
-    teleportToNPC(selectedNPC)
 end)
 
 ----------------------------------------------------------------
@@ -1096,6 +699,11 @@ local ISLAND_NAMES = {
     "Coconut Isle",
     "Mystic Reef Isle",
 }
+
+local function getPlayerRoot()
+    local character = player.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
 
 local islandSearch = textBox(islandPage, "🔍  Search island name...",
     UDim2.fromOffset(14, 10), UDim2.new(1, -116, 0, 34))
@@ -1370,15 +978,13 @@ minimize.MouseButton1Click:Connect(function()
     minimize.Text = minimized and "+" or "–"
 end)
 
-local function destroyGui()
-    autoEnabled = false
+close.MouseButton1Click:Connect(function()
+    setEnabled(false)
     for _, c in ipairs(connections) do
         c:Disconnect()
     end
     gui:Destroy()
-end
-
-close.MouseButton1Click:Connect(destroyGui)
+end)
 
 -- RightShift: show / hide the whole window
 connect(UserInputService.InputBegan, function(input, processed)
@@ -1393,7 +999,10 @@ end)
 ----------------------------------------------------------------
 -- Start
 ----------------------------------------------------------------
-selectTab("Server")
-setStatus("Ready. Press RightShift to hide/show.", nil)
-refreshNPCs()
+gui.Parent = CoreGui
+
+selectTab("AutoHop")
 refreshIslands()
+setStatus("Idle. Press RightShift to hide/show.", nil)
+
+print("[ChuTianjiaoAutoHop] Loaded successfully")
