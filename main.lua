@@ -1,8 +1,9 @@
 --[[
     UNIVERSAL HUB  (Server Joiner + Hop + NPC + Island + Heavy Fishing Suite)
-    Giao diện đồng bộ theo Universal Server Joiner.
+    Giao diện đồng bộ theo Universal Server Joiner - Tối ưu Responsive (PC / Mobile / Tablet).
     Tab Farm / Filter / Quest chỉ hoạt động trong game Heavy Fishing.
-    Phím tắt: RightShift / RightCtrl / Insert = ẩn/hiện cửa sổ.
+    Phím tắt PC: RightShift / RightCtrl / Insert = ẩn/hiện cửa sổ.
+    Mobile / Tablet: Sử dụng nút nổi "🎣 Hub" trên màn hình để ẩn/hiện.
 ]]
 
 local Players = game:GetService("Players")
@@ -14,6 +15,8 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local TweenService = game:GetService("TweenService")
+local Lighting = game:GetService("Lighting")
+local GuiService = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
 local genv = (getgenv and getgenv()) or _G
@@ -54,6 +57,10 @@ local gui = Instance.new("ScreenGui")
 gui.Name = "UniversalHub"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
+gui.IgnoreGuiInset = false
+pcall(function()
+    gui.ScreenInsets = Enum.ScreenInsets.DeviceSafeInsets
+end)
 gui.Parent = guiParent
 
 ----------------------------------------------------------------
@@ -105,10 +112,10 @@ local function corner(obj, radius)
     create("UICorner", { CornerRadius = UDim.new(0, radius or 6) }, obj)
 end
 
-local function stroke(obj, color)
-    create("UIStroke", {
+local function stroke(obj, color, thickness)
+    return create("UIStroke", {
         Color = color or C.border,
-        Thickness = 1,
+        Thickness = thickness or 1,
         ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
     }, obj)
 end
@@ -182,16 +189,17 @@ local function textBox(parent, placeholder, pos, size)
     return box
 end
 
--- Trang cuộn (dùng cho các tab dạng danh sách thẻ)
+-- Trang cuộn (hỗ trợ cả chuột và vuốt cảm ứng)
 local function scrollPage(page)
     local sf = create("ScrollingFrame", {
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundTransparency = 1,
         BorderSizePixel = 0,
-        ScrollBarThickness = 4,
+        ScrollBarThickness = UserInputService.TouchEnabled and 6 or 4,
         ScrollBarImageColor3 = C.muted,
         CanvasSize = UDim2.new(),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollingDirection = Enum.ScrollingDirection.Y,
     }, page)
     create("UIListLayout", {
         Padding = UDim.new(0, 6),
@@ -201,7 +209,7 @@ local function scrollPage(page)
         PaddingTop = UDim.new(0, 10),
         PaddingLeft = UDim.new(0, 14),
         PaddingRight = UDim.new(0, 14),
-        PaddingBottom = UDim.new(0, 10),
+        PaddingBottom = UDim.new(0, 14),
     }, sf)
     return sf
 end
@@ -214,23 +222,23 @@ end
 local function switchControl(parent, pos, default, cb)
     local sw = create("TextButton", {
         Position = pos,
-        Size = UDim2.fromOffset(44, 22),
+        Size = UDim2.fromOffset(46, 24),
         Text = "",
         AutoButtonColor = false,
         BorderSizePixel = 0,
     }, parent)
-    corner(sw, 11)
+    corner(sw, 12)
     local dot = create("Frame", {
-        Size = UDim2.fromOffset(16, 16),
+        Size = UDim2.fromOffset(18, 18),
         BackgroundColor3 = Color3.new(1, 1, 1),
         BorderSizePixel = 0,
     }, sw)
-    corner(dot, 8)
+    corner(dot, 9)
 
     local state = default and true or false
     local function render(animate)
         local bg = state and C.ok or C.item
-        local dp = state and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+        local dp = state and UDim2.new(1, -21, 0.5, -9) or UDim2.new(0, 3, 0.5, -9)
         if animate then
             local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
             TweenService:Create(sw, info, { BackgroundColor3 = bg }):Play()
@@ -256,7 +264,7 @@ end
 
 local function toggleCard(parent, title, subtitle, default, cb)
     local card = create("Frame", {
-        Size = UDim2.new(1, 0, 0, 52),
+        Size = UDim2.new(1, 0, 0, 54),
         BackgroundColor3 = C.panel,
         BorderSizePixel = 0,
     }, parent)
@@ -264,7 +272,7 @@ local function toggleCard(parent, title, subtitle, default, cb)
     stroke(card)
     label(card, title, UDim2.fromOffset(12, 7), UDim2.new(1, -80, 0, 20), 13, C.text, true)
     label(card, subtitle or "", UDim2.fromOffset(12, 28), UDim2.new(1, -80, 0, 18), 11, C.muted)
-    local set = switchControl(card, UDim2.new(1, -56, 0.5, -11), default, cb)
+    local set = switchControl(card, UDim2.new(1, -58, 0.5, -12), default, cb)
     return card, set
 end
 
@@ -290,14 +298,17 @@ local function actionButton(parent, text, color, cb)
 end
 
 ----------------------------------------------------------------
--- Main window
+-- Main window (Responsive cho PC, Mobile & Tablet)
 ----------------------------------------------------------------
-local WIDTH, HEIGHT = 560, 540
-local TITLE_H, TAB_H, STATUS_H = 40, 38, 32
+local BASE_WIDTH, BASE_HEIGHT = 560, 520
+local curWidth, curHeight = BASE_WIDTH, BASE_HEIGHT
+local TITLE_H, TAB_H, STATUS_H = 42, 40, 32
+local minimized = false
 
 local frame = create("Frame", {
-    Size = UDim2.fromOffset(WIDTH, HEIGHT),
-    Position = UDim2.new(0.5, -WIDTH / 2, 0.5, -HEIGHT / 2),
+    Size = UDim2.fromOffset(curWidth, curHeight),
+    Position = UDim2.fromScale(0.5, 0.5),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = C.bg,
     BorderSizePixel = 0,
     Active = true,
@@ -306,18 +317,78 @@ local frame = create("Frame", {
 corner(frame, 10)
 stroke(frame)
 
--- Tự co giãn cho màn hình nhỏ (mobile)
 local uiScale = create("UIScale", {}, frame)
-local function updateScale()
+
+-- Hàm giới hạn vị trí không cho cửa sổ tràn ra ngoài màn hình
+local function clampFramePosition()
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local vp = cam.ViewportSize
-    uiScale.Scale = math.clamp(math.min(vp.X / (WIDTH + 20), vp.Y / (HEIGHT + 20)), 0.5, 1)
+    local s = uiScale.Scale
+    local actualW = frame.AbsoluteSize.X
+    local actualH = frame.AbsoluteSize.Y
+
+    local absCenterX = vp.X * frame.Position.X.Scale + frame.Position.X.Offset
+    local absCenterY = vp.Y * frame.Position.Y.Scale + frame.Position.Y.Offset
+
+    local minX = math.min(vp.X * 0.5, (actualW * 0.5) + 6)
+    local maxX = math.max(vp.X * 0.5, vp.X - (actualW * 0.5) - 6)
+    local minY = math.min(vp.Y * 0.5, (actualH * 0.5) + 6)
+    local maxY = math.max(vp.Y * 0.5, vp.Y - (actualH * 0.5) - 6)
+
+    local clampedX = math.clamp(absCenterX, minX, maxX)
+    local clampedY = math.clamp(absCenterY, minY, maxY)
+
+    frame.Position = UDim2.new(0.5, clampedX - vp.X * 0.5, 0.5, clampedY - vp.Y * 0.5)
 end
-updateScale()
-if Workspace.CurrentCamera then
-    connect(Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"), updateScale)
+
+-- Tự động nhận diện kích thước màn hình (Mobile dọc, Mobile ngang, Tablet, PC)
+local function updateResponsiveLayout()
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+    if vp.X <= 0 or vp.Y <= 0 then return end
+
+    local isPortrait = vp.Y > vp.X
+    local isShortLandscape = (not isPortrait) and vp.Y < 500
+
+    if isPortrait then
+        -- Điện thoại cầm dọc: thu hẹp chiều ngang, tăng chiều dọc vừa phải
+        curWidth = 460
+        curHeight = 520
+    elseif isShortLandscape then
+        -- Điện thoại xoay ngang: giảm chiều cao khung để chữ không bị thu nhỏ quá mức
+        curWidth = 560
+        curHeight = 400
+    else
+        -- PC / Tablet lớn
+        curWidth = BASE_WIDTH
+        curHeight = BASE_HEIGHT
+    end
+
+    frame.Size = minimized
+        and UDim2.fromOffset(curWidth, TITLE_H)
+        or UDim2.fromOffset(curWidth, curHeight)
+
+    local margin = UserInputService.TouchEnabled and 16 or 28
+    local scaleX = (vp.X - margin) / curWidth
+    local scaleY = (vp.Y - margin) / curHeight
+    uiScale.Scale = math.clamp(math.min(scaleX, scaleY), 0.55, 1.05)
+
+    task.defer(clampFramePosition)
 end
+
+local function attachCameraListener()
+    local cam = Workspace.CurrentCamera
+    if cam then
+        connect(cam:GetPropertyChangedSignal("ViewportSize"), updateResponsiveLayout)
+    end
+end
+attachCameraListener()
+connect(Workspace:GetPropertyChangedSignal("CurrentCamera"), function()
+    attachCameraListener()
+    updateResponsiveLayout()
+end)
 
 local titleBar = create("Frame", {
     Size = UDim2.new(1, 0, 0, TITLE_H),
@@ -330,17 +401,36 @@ label(titleBar, "Universal Hub  |  Server • NPC • Island • Fishing", UDim2
     UDim2.new(1, -110, 1, 0), 14, C.text, true)
 
 local minimize = button(titleBar, "–",
-    UDim2.new(1, -72, 0, 6), UDim2.fromOffset(28, 28), C.item)
+    UDim2.new(1, -74, 0.5, -15), UDim2.fromOffset(30, 30), C.item)
 local close = button(titleBar, "×",
-    UDim2.new(1, -38, 0, 6), UDim2.fromOffset(28, 28), C.danger)
+    UDim2.new(1, -38, 0.5, -15), UDim2.fromOffset(30, 30), C.danger)
 
--- Tabs
-local tabBar = create("Frame", {
+-- Tabs (Hỗ trợ cuộn ngang mượt trên màn hình nhỏ & tự dàn đều trên màn hình rộng)
+local tabBarContainer = create("Frame", {
     Position = UDim2.fromOffset(0, TITLE_H),
     Size = UDim2.new(1, 0, 0, TAB_H),
     BackgroundColor3 = C.header,
     BorderSizePixel = 0,
 }, frame)
+
+local tabBar = create("ScrollingFrame", {
+    Size = UDim2.new(1, -8, 1, 0),
+    Position = UDim2.fromOffset(4, 0),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 2,
+    ScrollBarImageColor3 = C.accent,
+    ScrollingDirection = Enum.ScrollingDirection.X,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+}, tabBarContainer)
+
+local tabListLayout = create("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0, 4),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+}, tabBar)
 
 local tabButtons = {}
 local pages = {}
@@ -350,7 +440,7 @@ local function selectTab(name)
     activeTab = name
     for tabName, b in pairs(tabButtons) do
         local active = tabName == name
-        setButtonColor(b, active and C.accent or C.header)
+        setButtonColor(b, active and C.accent or C.item)
         b.TextColor3 = active and C.text or C.muted
     end
     for pageName, page in pairs(pages) do
@@ -370,14 +460,26 @@ local tabTitles = {
 }
 for i, name in ipairs(tabNames) do
     local b = button(tabBar, tabTitles[name],
-        UDim2.new((i - 1) / #tabNames, 3, 0, 4),
-        UDim2.new(1 / #tabNames, -6, 1, -8), C.header)
+        UDim2.new(),
+        UDim2.fromOffset(75, TAB_H - 8), C.item)
     b.TextSize = 11
+    b.LayoutOrder = i
     tabButtons[name] = b
     b.MouseButton1Click:Connect(function()
         selectTab(name)
     end)
 end
+
+-- Tự động co giãn chiều rộng các nút Tab theo kích thước cửa sổ
+local function updateTabSizes()
+    local totalW = tabBar.AbsoluteSize.X
+    if totalW <= 0 then totalW = curWidth - 8 end
+    local btnW = math.max(72, math.floor((totalW - (#tabNames - 1) * 4) / #tabNames))
+    for _, b in pairs(tabButtons) do
+        b.Size = UDim2.fromOffset(btnW, TAB_H - 8)
+    end
+end
+connect(tabBar:GetPropertyChangedSignal("AbsoluteSize"), updateTabSizes)
 
 local pageArea = create("Frame", {
     Position = UDim2.fromOffset(0, TITLE_H + TAB_H),
@@ -434,6 +536,78 @@ local function getPlayerRoot()
 end
 
 ----------------------------------------------------------------
+-- FLOATING TOGGLE BUTTON (Dành cho Mobile / Tablet & Truy cập nhanh)
+----------------------------------------------------------------
+local floatBtn = create("TextButton", {
+    Name = "FloatingToggle",
+    Size = UDim2.fromOffset(78, 36),
+    Position = UDim2.new(0, 18, 0.5, -18),
+    BackgroundColor3 = C.header,
+    BorderSizePixel = 0,
+    Text = "🎣 Hub",
+    TextColor3 = C.text,
+    TextSize = 13,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+    ZIndex = 1000,
+}, gui)
+corner(floatBtn, 18)
+local floatStroke = stroke(floatBtn, C.accent, 1.5)
+
+local function updateFloatBtnVisual()
+    floatStroke.Color = frame.Visible and C.accent or C.muted
+    floatBtn.BackgroundColor3 = frame.Visible and C.header or C.bg
+end
+
+do
+    local fDragging = false
+    local fDragStart, fStartPos
+    local moved = false
+
+    floatBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            fDragging = true
+            moved = false
+            fDragStart = input.Position
+            fStartPos = floatBtn.Position
+        end
+    end)
+
+    connect(UserInputService.InputChanged, function(input)
+        if fDragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            local delta = input.Position - fDragStart
+            if delta.Magnitude > 6 then
+                moved = true
+            end
+            local cam = Workspace.CurrentCamera
+            local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+            local absX = vp.X * fStartPos.X.Scale + fStartPos.X.Offset + delta.X
+            local absY = vp.Y * fStartPos.Y.Scale + fStartPos.Y.Offset + delta.Y
+            absX = math.clamp(absX, 6, math.max(6, vp.X - floatBtn.AbsoluteSize.X - 6))
+            absY = math.clamp(absY, 6, math.max(6, vp.Y - floatBtn.AbsoluteSize.Y - 6))
+            floatBtn.Position = UDim2.fromOffset(absX, absY)
+        end
+    end)
+
+    connect(UserInputService.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            if fDragging then
+                fDragging = false
+                if not moved then
+                    frame.Visible = not frame.Visible
+                    updateFloatBtnVisual()
+                end
+            end
+        end
+    end)
+end
+
+----------------------------------------------------------------
 -- FISHING ENGINE (từ Heavy Fishing Suite)
 ----------------------------------------------------------------
 local function detectFishingGame()
@@ -448,6 +622,7 @@ local Config = {
     AutoSell = false,
     AutoBait = false,
     AntiAFK = false,
+    BoostFps = false,
     SelectedBait = "Basic Bait",
     BaitBuyAmount = 20,
     BaitThreshold = 2,
@@ -521,14 +696,44 @@ function Farm.checkBait()
     end
 end
 
+local lastSellTime = 0
+
 function Farm.checkSell(force)
     if not Config.AutoSell then return end
     local E = Farm.events()
     if not E then return end
+    local now = os.clock()
     local count, limit = Farm.invCount()
-    if force or count >= (limit - 2) then
-        if E:FindFirstChild("SellFish") then E.SellFish:FireServer() end
+    
+    if force or count >= (limit - 2) or (count > 0 and now - lastSellTime >= 30) then
+        if E:FindFirstChild("SellFish") then
+            E.SellFish:FireServer()
+            lastSellTime = now
+        end
     end
+end
+
+local isHandlingTicketQuest = false
+
+local function teleportFacingNPC()
+    local char = player.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    local npcFolder = Workspace:FindFirstChild("NPC")
+    local fn = npcFolder and npcFolder:FindFirstChild("Function")
+    local giver = fn and fn:FindFirstChild("Ticket Quest Giver")
+    local targetRoot = giver and (giver:FindFirstChild("HumanoidRootPart") or giver:FindFirstChildWhichIsA("BasePart"))
+
+    if hrp and targetRoot then
+        local npcPos = targetRoot.Position
+        local look = targetRoot.CFrame.LookVector
+        local standPos = npcPos + Vector3.new(look.X * 3.5, 0.5, look.Z * 3.5)
+        hrp.CFrame = CFrame.new(standPos, Vector3.new(npcPos.X, standPos.Y, npcPos.Z))
+        return true
+    elseif hrp then
+        hrp.CFrame = CFrame.new(KEY_SPOTS["Ticket Quest Giver"] + Vector3.new(0, 3, 0))
+        return true
+    end
+    return false
 end
 
 function Farm.activeQuest()
@@ -551,7 +756,6 @@ function Farm.questCooldown()
     return math.max(0, math.floor((cd.Value or 0) - Workspace:GetServerTimeNow()))
 end
 
--- Trả về tên quest, tiến độ, mục tiêu
 function Farm.questProgress(defaultTarget)
     local qName, qFolder = Farm.activeQuest()
     if not qName or not qFolder then return nil end
@@ -564,34 +768,68 @@ function Farm.questProgress(defaultTarget)
     return qName, prog, target
 end
 
-function Farm.acceptQuest(diff)
+local function clickButton(btn)
+    if not btn then return false end
+    if getconnections then
+        for _, c in ipairs(getconnections(btn.MouseButton1Click)) do
+            if c.Fire then c:Fire() elseif c.fire then c:fire() end
+        end
+    end
+    pcall(function()
+        if firesignal then firesignal(btn.MouseButton1Click) end
+    end)
+    return true
+end
+
+function Farm.interactWithNPC(diff)
     local npcFolder = Workspace:FindFirstChild("NPC")
     local fn = npcFolder and npcFolder:FindFirstChild("Function")
     local giver = fn and fn:FindFirstChild("Ticket Quest Giver")
     if not giver then return false end
+
     local prompt = giver:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if not prompt or not fireproximityprompt or not getconnections then return false end
+    if not prompt or not fireproximityprompt then return false end
 
     local mainGui = player.PlayerGui:FindFirstChild("MainGui")
     local menu = mainGui and mainGui:FindFirstChild("Menu")
     local dialogue = menu and menu:FindFirstChild("Dialogue")
 
     fireproximityprompt(prompt)
-    task.wait(0.4)
-    local frameBtns = dialogue and dialogue:FindFirstChild("ButtonFrame")
-    local btn1 = frameBtns and frameBtns:FindFirstChild("1")
-    if btn1 then
-        for _, c in ipairs(getconnections(btn1.MouseButton1Click)) do c:Fire() end
-        task.wait(0.4)
+
+    local opened = false
+    for _ = 1, 10 do
+        task.wait(0.25)
+        if dialogue and dialogue.Visible then
+            opened = true
+            break
+        end
+        fireproximityprompt(prompt)
     end
 
-    local choice = frameBtns and frameBtns:FindFirstChild(diff == "Hard" and "2" or "1")
-    if choice then
-        for _, c in ipairs(getconnections(choice.MouseButton1Click)) do c:Fire() end
-        task.wait(0.3)
-        return true
+    if not opened or not dialogue then return false end
+
+    local btnFrame = dialogue:FindFirstChild("ButtonFrame")
+    if not btnFrame then return false end
+
+    local btn1 = btnFrame:FindFirstChild("1")
+    if btn1 and btn1.Visible then
+        clickButton(btn1)
+        task.wait(0.6)
     end
-    return false
+
+    local targetBtn = (diff == "Hard") and btnFrame:FindFirstChild("2") or btnFrame:FindFirstChild("1")
+    if targetBtn and targetBtn.Visible then
+        clickButton(targetBtn)
+        task.wait(0.5)
+    end
+
+    local leaveBtn = btnFrame:FindFirstChild("1")
+    if leaveBtn and leaveBtn.Visible then
+        clickButton(leaveBtn)
+        task.wait(0.3)
+    end
+
+    return true
 end
 
 function Farm.claimQuest()
@@ -604,6 +842,53 @@ function Farm.claimQuest()
         return true
     end
     return false
+end
+
+function Farm.processTicketQuestCycle()
+    if not Config.TicketQuestEnabled or isHandlingTicketQuest or not Farm.events() then return end
+
+    local qName, prog, target = Farm.questProgress(0)
+    local isCompleted = (qName ~= nil and target > 0 and prog >= target)
+    local cooldown = Farm.questCooldown()
+    local shouldTakeNew = (not qName and cooldown <= 0)
+
+    if isCompleted or shouldTakeNew then
+        isHandlingTicketQuest = true
+
+        local char = player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            isHandlingTicketQuest = false
+            return
+        end
+
+        local savedSpot = hrp.CFrame
+        setStatus("Ticket Quest: Đang bay về trước mặt NPC...", "info")
+
+        task.wait(0.4)
+        teleportFacingNPC()
+        task.wait(0.8)
+
+        if isCompleted and qName then
+            Farm.claimQuest()
+            setStatus("Ticket Quest: Đã gửi nhận thưởng vé quay!", "ok")
+            task.wait(0.8)
+        end
+
+        setStatus("Ticket Quest: Đang tương tác trò chuyện với NPC...", "info")
+        Farm.interactWithNPC(Config.TicketDifficulty)
+        task.wait(1)
+
+        local curChar = player.Character
+        local curHrp = curChar and curChar:FindFirstChild("HumanoidRootPart")
+        if curHrp then
+            curHrp.CFrame = savedSpot
+        end
+        setStatus("Ticket Quest: Đã trở lại vị trí câu ban đầu.", "ok")
+        task.wait(0.8)
+
+        isHandlingTicketQuest = false
+    end
 end
 
 function Farm.ensureRod()
@@ -650,10 +935,88 @@ local function updateAntiAFK()
 end
 updateAntiAFK()
 
+-- =========================================================
+-- FPS BOOST ENGINE
+-- =========================================================
+local SavedFpsProperties = setmetatable({}, { __mode = "k" })
+local FpsDescendantConn = nil
+
+local function setAndSaveProperty(inst, prop, newVal)
+    local saved = SavedFpsProperties[inst]
+    if not saved then
+        saved = {}
+        SavedFpsProperties[inst] = saved
+    end
+    if saved[prop] == nil then
+        local ok, curVal = pcall(function() return inst[prop] end)
+        if not ok then return end
+        saved[prop] = curVal
+    end
+    pcall(function() inst[prop] = newVal end)
+end
+
+local function optimizeInstanceForFps(inst)
+    if inst:IsA("BasePart") then
+        setAndSaveProperty(inst, "CastShadow", false)
+        setAndSaveProperty(inst, "Reflectance", 0)
+    elseif inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") or inst:IsA("Smoke") or inst:IsA("Sparkles") or inst:IsA("Fire") then
+        setAndSaveProperty(inst, "Enabled", false)
+    elseif inst:IsA("Decal") or inst:IsA("Texture") then
+        setAndSaveProperty(inst, "Transparency", 1)
+    elseif inst:IsA("PostEffect") then
+        setAndSaveProperty(inst, "Enabled", false)
+    elseif inst:IsA("Atmosphere") then
+        setAndSaveProperty(inst, "Density", 0)
+    end
+end
+
+local function restoreFpsProperties()
+    if FpsDescendantConn then
+        FpsDescendantConn:Disconnect()
+        FpsDescendantConn = nil
+    end
+    for inst, props in pairs(SavedFpsProperties) do
+        for prop, val in pairs(props) do
+            pcall(function() inst[prop] = val end)
+        end
+    end
+    table.clear(SavedFpsProperties)
+end
+
+local function toggleBoostFps(enabled)
+    restoreFpsProperties()
+    if not enabled then return end
+
+    pcall(function()
+        local renderSettings = settings().Rendering
+        setAndSaveProperty(renderSettings, "QualityLevel", Enum.QualityLevel.Level01)
+    end)
+    setAndSaveProperty(Lighting, "GlobalShadows", false)
+    setAndSaveProperty(Lighting, "EnvironmentDiffuseScale", 0)
+    setAndSaveProperty(Lighting, "EnvironmentSpecularScale", 0)
+
+    local terrain = Workspace.Terrain
+    if terrain then
+        setAndSaveProperty(terrain, "Decoration", false)
+        setAndSaveProperty(terrain, "WaterWaveSize", 0)
+        setAndSaveProperty(terrain, "WaterWaveSpeed", 0)
+        setAndSaveProperty(terrain, "WaterReflectance", 0)
+    end
+
+    for _, desc in ipairs(Workspace:GetDescendants()) do
+        optimizeInstanceForFps(desc)
+    end
+    for _, desc in ipairs(Lighting:GetDescendants()) do
+        optimizeInstanceForFps(desc)
+    end
+    FpsDescendantConn = connect(game.DescendantAdded, optimizeInstanceForFps)
+end
+
 -- RenderStepped: perfect catch + lọc cá + auto skill
 connect(RunService.RenderStepped, function()
     if not isActive() then return end
     if not Config.AutoFish and not Config.AutoSkill then return end
+    if isHandlingTicketQuest then return end
 
     local pGui = player:FindFirstChild("PlayerGui")
     local mainGui = pGui and pGui:FindFirstChild("MainGui")
@@ -688,11 +1051,28 @@ connect(RunService.RenderStepped, function()
             if E and E:FindFirstChild("UpdateFishProgression") then
                 E.UpdateFishProgression:FireServer()
             end
-            if Config.AutoSkill and E and E:FindFirstChild("UseSkill") then
-                E.UseSkill:FireServer("Z")
-                E.UseSkill:FireServer("X")
-                E.UseSkill:FireServer("C")
-                E.UseSkill:FireServer("V")
+        end
+    end
+end)
+
+-- Auto Skill theo thứ tự: Z -> X -> C -> V
+local skillKeys = { "Z", "X", "C", "V" }
+task.spawn(function()
+    while isActive() and gui.Parent do
+        task.wait(0.12)
+        if Config.AutoSkill and not isHandlingTicketQuest then
+            local pGui = player:FindFirstChild("PlayerGui")
+            local mainGui = pGui and pGui:FindFirstChild("MainGui")
+            local fishingFrame = mainGui and mainGui:FindFirstChild("Fishing")
+            if fishingFrame and fishingFrame.Visible then
+                local E = Farm.events()
+                if E and E:FindFirstChild("UseSkill") then
+                    for _, key in ipairs(skillKeys) do
+                        if not Config.AutoSkill or not fishingFrame.Visible then break end
+                        E.UseSkill:FireServer(key)
+                        task.wait(0.18)
+                    end
+                end
             end
         end
     end
@@ -702,7 +1082,7 @@ end)
 task.spawn(function()
     while isActive() and gui.Parent do
         task.wait(0.4)
-        if Config.AutoFish then
+        if Config.AutoFish and not isHandlingTicketQuest then
             local E = Farm.events()
             local char = player.Character
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -717,8 +1097,11 @@ task.spawn(function()
                     task.wait(1)
                 else
                     Farm.checkBait()
+                    Farm.checkSell(false)
                     Farm.ensureRod()
-                    if not char:GetAttribute("Fishing") and not char:GetAttribute("CDForTheNextThrow") then
+                    local isFishing = char:GetAttribute("Fishing")
+                    local isCoolingDown = char:GetAttribute("CDForTheNextThrow")
+                    if not isFishing and not isCoolingDown then
                         E.Fishing:FireServer(hrp.CFrame)
                         task.wait(1.5)
                     end
@@ -731,14 +1114,9 @@ end)
 -- Vòng lặp Ticket Quest
 task.spawn(function()
     while isActive() and gui.Parent do
-        task.wait(5)
+        task.wait(3)
         if Config.TicketQuestEnabled and Farm.events() then
-            Farm.claimQuest()
-            local active = Farm.activeQuest()
-            if not active and Farm.questCooldown() <= 0 then
-                Farm.acceptQuest(Config.TicketDifficulty)
-                task.wait(2)
-            end
+            Farm.processTicketQuestCycle()
         end
     end
 end)
@@ -747,24 +1125,21 @@ end)
 -- SERVER PAGE
 ----------------------------------------------------------------
 do
-    local serverPage = pages.Server
+    local serverPage = scrollPage(pages.Server)
 
-    label(serverPage, "JOIN SERVER BY JOBID", UDim2.fromOffset(14, 12),
-        UDim2.new(1, -28, 0, 16), 11, C.muted, true)
+    sectionLabel(serverPage, "JOIN SERVER BY JOBID")
 
     local jobInput = textBox(serverPage, "Paste server JobId here...",
-        UDim2.fromOffset(14, 34), UDim2.new(1, -28, 0, 38))
+        UDim2.new(), UDim2.new(1, 0, 0, 38))
 
     local joinButton = button(serverPage, "JOIN SERVER",
-        UDim2.fromOffset(14, 80), UDim2.new(1, -28, 0, 40), C.accent)
+        UDim2.new(), UDim2.new(1, 0, 0, 40), C.accent)
     joinButton.TextSize = 14
 
-    label(serverPage, "CURRENT SERVER", UDim2.fromOffset(14, 138),
-        UDim2.new(1, -28, 0, 16), 11, C.muted, true)
+    sectionLabel(serverPage, "CURRENT SERVER")
 
     local infoFrame = create("Frame", {
-        Position = UDim2.fromOffset(14, 160),
-        Size = UDim2.new(1, -28, 0, 96),
+        Size = UDim2.new(1, 0, 0, 96),
         BackgroundColor3 = C.panel,
         BorderSizePixel = 0,
     }, serverPage)
@@ -792,13 +1167,18 @@ do
         task.defer(refreshServerInfo)
     end)
 
-    local copyButton = button(serverPage, "Copy JobId",
-        UDim2.fromOffset(14, 268), UDim2.new(0.5, -18, 0, 36), C.item)
-    local rejoinButton = button(serverPage, "Rejoin",
-        UDim2.new(0.5, 4, 0, 268), UDim2.new(0.5, -18, 0, 36), C.item)
+    local actionRow = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 38),
+        BackgroundTransparency = 1,
+    }, serverPage)
+
+    local copyButton = button(actionRow, "Copy JobId",
+        UDim2.new(0, 0, 0, 0), UDim2.new(0.5, -4, 1, 0), C.item)
+    local rejoinButton = button(actionRow, "Rejoin",
+        UDim2.new(0.5, 4, 0, 0), UDim2.new(0.5, -4, 1, 0), C.item)
 
     label(serverPage, "Tip: press Enter in the box to join quickly.",
-        UDim2.fromOffset(14, 316), UDim2.new(1, -28, 0, 18), 11, C.muted)
+        UDim2.new(), UDim2.new(1, 0, 0, 18), 11, C.muted)
 
     local function joinServer()
         local jobId = jobInput.Text:match("^%s*(.-)%s*$")
@@ -863,7 +1243,7 @@ end
 -- HOP PAGE
 ----------------------------------------------------------------
 do
-    local hopPage = pages.Hop
+    local hopPage = scrollPage(pages.Hop)
 
     local AUTO_INTERVAL = 30
     local MAX_PAGES = 5
@@ -873,12 +1253,10 @@ do
     local lastHop = 0
     local visited = {}
 
-    label(hopPage, "RANDOM SERVER HOP", UDim2.fromOffset(14, 12),
-        UDim2.new(1, -28, 0, 16), 11, C.muted, true)
+    sectionLabel(hopPage, "RANDOM SERVER HOP")
 
     local hopCard = create("Frame", {
-        Position = UDim2.fromOffset(14, 34),
-        Size = UDim2.new(1, -28, 0, 72),
+        Size = UDim2.new(1, 0, 0, 72),
         BackgroundColor3 = C.panel,
         BorderSizePixel = 0,
     }, hopPage)
@@ -894,14 +1272,14 @@ do
         UDim2.fromOffset(84, 40), UDim2.new(1, -96, 0, 20), 12, C.text)
 
     local hopButton = button(hopPage, "HOP NOW",
-        UDim2.fromOffset(14, 118), UDim2.new(1, -28, 0, 40), C.accent)
+        UDim2.new(), UDim2.new(1, 0, 0, 40), C.accent)
     hopButton.TextSize = 14
 
     local autoButton = button(hopPage, "AUTO HOP: OFF",
-        UDim2.fromOffset(14, 166), UDim2.new(1, -28, 0, 38), C.ok)
+        UDim2.new(), UDim2.new(1, 0, 0, 38), C.ok)
 
     label(hopPage, "Auto interval: " .. AUTO_INTERVAL .. " seconds",
-        UDim2.fromOffset(14, 214), UDim2.new(1, -28, 0, 20), 11, C.muted)
+        UDim2.new(), UDim2.new(1, 0, 0, 20), 11, C.muted)
 
     local function getServers()
         local candidates = {}
@@ -1106,10 +1484,10 @@ do
 
     local npcList = create("ScrollingFrame", {
         Position = UDim2.fromOffset(14, 114),
-        Size = UDim2.new(1, -28, 1, -114 - 100),
+        Size = UDim2.new(1, -28, 1, -114 - 92),
         BackgroundColor3 = C.panel,
         BorderSizePixel = 0,
-        ScrollBarThickness = 4,
+        ScrollBarThickness = UserInputService.TouchEnabled and 6 or 4,
         ScrollBarImageColor3 = C.muted,
         CanvasSize = UDim2.new(),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -1135,18 +1513,18 @@ do
     emptyLabel.Visible = false
 
     local selectedLabel = label(npcPage, "Selected: none",
-        UDim2.new(0, 14, 1, -88), UDim2.new(1, -28, 0, 20), 12, C.muted)
+        UDim2.new(0, 14, 1, -82), UDim2.new(1, -28, 0, 18), 12, C.muted)
 
     local teleportButton = button(npcPage, "TELEPORT TO NPC",
-        UDim2.new(0, 14, 1, -62), UDim2.new(1, -134, 0, 38), C.accent)
-    teleportButton.TextSize = 14
+        UDim2.new(0, 14, 1, -58), UDim2.new(1, -134, 0, 36), C.accent)
+    teleportButton.TextSize = 13
 
     local cycleButton = button(npcPage, "Next ▸",
-        UDim2.new(1, -112, 1, -62), UDim2.fromOffset(98, 38), C.panel)
+        UDim2.new(1, -112, 1, -58), UDim2.fromOffset(98, 36), C.panel)
     stroke(cycleButton)
 
-    label(npcPage, "Tip: double-click to teleport. Next switches between locations.",
-        UDim2.new(0, 14, 1, -20), UDim2.new(1, -28, 0, 16), 11, C.muted)
+    label(npcPage, "Tip: double-click/tap to teleport. Next switches locations.",
+        UDim2.new(0, 14, 1, -18), UDim2.new(1, -28, 0, 16), 11, C.muted)
 
     local allNPCs = {}
     local groupedNPCs = {}
@@ -1541,10 +1919,10 @@ do
 
     local islandList = create("ScrollingFrame", {
         Position = UDim2.fromOffset(14, 76),
-        Size = UDim2.new(1, -28, 1, -76 - 100),
+        Size = UDim2.new(1, -28, 1, -76 - 92),
         BackgroundColor3 = C.panel,
         BorderSizePixel = 0,
-        ScrollBarThickness = 4,
+        ScrollBarThickness = UserInputService.TouchEnabled and 6 or 4,
         ScrollBarImageColor3 = C.muted,
         CanvasSize = UDim2.new(),
         AutomaticCanvasSize = Enum.AutomaticSize.Y,
@@ -1570,16 +1948,15 @@ do
     islandEmpty.Visible = false
 
     local islandSelectedLabel = label(islandPage, "Selected: none",
-        UDim2.new(0, 14, 1, -88), UDim2.new(1, -28, 0, 20), 12, C.muted)
+        UDim2.new(0, 14, 1, -82), UDim2.new(1, -28, 0, 18), 12, C.muted)
 
     local islandTeleport = button(islandPage, "TELEPORT",
-        UDim2.new(0, 14, 1, -62), UDim2.new(1, -28, 0, 38), C.accent)
-    islandTeleport.TextSize = 14
+        UDim2.new(0, 14, 1, -58), UDim2.new(1, -28, 0, 36), C.accent)
+    islandTeleport.TextSize = 13
 
-    label(islandPage, "Tip: double-click an entry to teleport.",
-        UDim2.new(0, 14, 1, -20), UDim2.new(1, -28, 0, 16), 11, C.muted)
+    label(islandPage, "Tip: double-click/tap an entry to teleport.",
+        UDim2.new(0, 14, 1, -18), UDim2.new(1, -28, 0, 16), 11, C.muted)
 
-    -- entry = { name, kind, getPos = function() -> Vector3|nil, lift = number }
     local entries = {}
     local filtered = {}
     local islandRows = {}
@@ -1801,17 +2178,83 @@ do
     end)
 
     sectionLabel(p, "HỖ TRỢ")
-    toggleCard(p, "💰 Tự bán cá", "Gọi SellFish khi túi gần đầy", Config.AutoSell, function(v)
+    toggleCard(p, "💰 Tự bán cá", "Bán sau mỗi 30s hoặc khi túi gần đầy", Config.AutoSell, function(v)
         Config.AutoSell = v
         if v then Farm.checkSell(true) end
     end)
-    toggleCard(p, "🪱 Tự mua mồi", "Tự mua thêm 20 Basic Bait khi ≤ 2", Config.AutoBait, function(v)
+    toggleCard(p, "🪱 Tự mua & lắp mồi", "Tự mua thêm 20 mồi khi số lượng ≤ 2", Config.AutoBait, function(v)
         Config.AutoBait = v
         if v then Farm.checkBait() end
     end)
+
+    local ALL_BAITS = {
+        "Basic Bait", "Thunder Bait", "Frost Bait", "Rainbow Bait",
+        "Elite Bait", "Corrupted Essence Bait", "Crude Mash Bait",
+        "Ancestral Bait", "Intuitive Bait", "Nameless Bait"
+    }
+
+    local baitCard = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundColor3 = C.panel,
+        BorderSizePixel = 0,
+    }, p)
+    corner(baitCard, 8)
+    stroke(baitCard)
+    create("UIListLayout", {
+        Padding = UDim.new(0, 6),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, baitCard)
+    create("UIPadding", {
+        PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
+        PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10),
+    }, baitCard)
+
+    local baitTitle = label(baitCard, "Chọn mồi câu: " .. Config.SelectedBait,
+        UDim2.new(), UDim2.new(1, 0, 0, 20), 12, C.accent, true)
+    baitTitle.LayoutOrder = 1
+
+    local baitGrid = create("Frame", {
+        Size = UDim2.new(1, 0, 0, 0),
+        AutomaticSize = Enum.AutomaticSize.Y,
+        BackgroundTransparency = 1,
+        LayoutOrder = 2,
+    }, baitCard)
+    create("UIGridLayout", {
+        CellSize = UDim2.new(0.5, -3, 0, 30),
+        CellPadding = UDim2.fromOffset(4, 4),
+        SortOrder = Enum.SortOrder.LayoutOrder,
+    }, baitGrid)
+
+    local baitButtons = {}
+    for _, bName in ipairs(ALL_BAITS) do
+        local bBtn = button(baitGrid, bName, UDim2.new(), UDim2.new(),
+            bName == Config.SelectedBait and C.selected or C.item)
+        bBtn.TextSize = 11
+        bBtn.TextTruncate = Enum.TextTruncate.AtEnd
+        baitButtons[bName] = bBtn
+
+        bBtn.MouseButton1Click:Connect(function()
+            Config.SelectedBait = bName
+            baitTitle.Text = "Chọn mồi câu: " .. bName
+            for name, btn in pairs(baitButtons) do
+                setButtonColor(btn, name == bName and C.selected or C.item)
+            end
+            if Config.AutoBait then
+                Farm.checkBait()
+            end
+            setStatus("Đã chọn mồi câu: " .. bName, "info")
+        end)
+    end
+
     toggleCard(p, "🛡 Chống AFK", "Treo máy không bị kick", Config.AntiAFK, function(v)
         Config.AntiAFK = v
         updateAntiAFK()
+    end)
+    toggleCard(p, "⚡ Tối ưu FPS (Boost FPS)", "Tắt bóng, hiệu ứng, texture để tăng mượt và giảm giật lag", Config.BoostFps, function(v)
+        Config.BoostFps = v
+        toggleBoostFps(v)
+        setStatus(v and "Đã bật Boost FPS (đồ họa tối giản)." or "Đã khôi phục đồ họa ban đầu.", v and "ok" or "info")
     end)
 end
 
@@ -1829,12 +2272,11 @@ do
     local skipLbl = infoCard(p, 32, C.warn)
     skipLbl.Text = "⏩ Đã skip: 0 con | Gần nhất: Chưa có"
 
-    -- Thanh tìm kiếm (lọc cả bảng cá và danh sách chọn nhanh)
     local searchBox = textBox(p, "🔍  Search fish name...", UDim2.new(), UDim2.new(1, 0, 0, 34))
     local fishCountLbl = label(p, "Fish: 0  |  Results: 0", UDim2.new(), UDim2.new(1, 0, 0, 16), 11, C.muted)
 
-    local applyFilter          -- được gán sau khi pickerBody được tạo
-    local pickerAreas = {}     -- { {header=, grid=, items={ {btn=, name=} }} }
+    local applyFilter
+    local pickerAreas = {}
     local pickerOpen = false
 
     sectionLabel(p, "BẢNG CÁ  (Bật = Câu | Tắt = Skip)")
@@ -1852,7 +2294,7 @@ do
         if listContainer:FindFirstChild("Row_" .. fName) then return end
         local row = create("Frame", {
             Name = "Row_" .. fName,
-            Size = UDim2.new(1, 0, 0, 34),
+            Size = UDim2.new(1, 0, 0, 36),
             BackgroundColor3 = C.item,
             BorderSizePixel = 0,
         }, listContainer)
@@ -1861,11 +2303,11 @@ do
         label(row, fName, UDim2.fromOffset(12, 0), UDim2.new(1, -110, 1, 0), 13, C.text)
 
         Config.CustomFishTable[fName] = active ~= false
-        switchControl(row, UDim2.new(1, -92, 0.5, -11), active ~= false, function(v)
+        switchControl(row, UDim2.new(1, -94, 0.5, -12), active ~= false, function(v)
             Config.CustomFishTable[fName] = v
         end)
 
-        local del = button(row, "✕", UDim2.new(1, -36, 0.5, -12), UDim2.fromOffset(26, 24), C.danger)
+        local del = button(row, "✕", UDim2.new(1, -36, 0.5, -13), UDim2.fromOffset(26, 26), C.danger)
         del.TextSize = 12
         del.MouseButton1Click:Connect(function()
             Config.CustomFishTable[fName] = nil
@@ -1883,10 +2325,9 @@ do
         end
     end
 
-    -- Danh sách chọn nhanh
     sectionLabel(p, "CHỌN NHANH TỪ DANH SÁCH")
     local pickerHeader = button(p, "▼  Danh sách cá trong game (bấm để mở)",
-        UDim2.new(), UDim2.new(1, 0, 0, 32), C.panel)
+        UDim2.new(), UDim2.new(1, 0, 0, 34), C.panel)
     pickerHeader.TextXAlignment = Enum.TextXAlignment.Left
     pickerHeader.TextSize = 12
     create("UIPadding", { PaddingLeft = UDim.new(0, 10) }, pickerHeader)
@@ -1912,7 +2353,6 @@ do
     applyFilter = function()
         local query = searchBox.Text:lower():match("^%s*(.-)%s*$")
 
-        -- Bảng cá đã chọn
         local total, shown = 0, 0
         for _, child in ipairs(listContainer:GetChildren()) do
             if child:IsA("Frame") and child.Name:sub(1, 4) == "Row_" then
@@ -1925,7 +2365,6 @@ do
         end
         fishCountLbl.Text = "Fish: " .. total .. "  |  Results: " .. shown
 
-        -- Danh sách chọn nhanh
         local pickerAny = false
         for _, area in ipairs(pickerAreas) do
             local any = false
@@ -1940,7 +2379,6 @@ do
             if any then pickerAny = true end
         end
 
-        -- Khi đang tìm kiếm thì tự mở danh sách nếu có kết quả
         pickerBody.Visible = pickerOpen or (query ~= "" and pickerAny)
     end
 
@@ -2013,7 +2451,7 @@ do
                 LayoutOrder = order,
             }, pickerBody)
             create("UIGridLayout", {
-                CellSize = UDim2.new(0.5, -3, 0, 26),
+                CellSize = UDim2.new(0.5, -3, 0, 28),
                 CellPadding = UDim2.fromOffset(4, 4),
                 SortOrder = Enum.SortOrder.LayoutOrder,
             }, grid)
@@ -2093,8 +2531,10 @@ do
             setStatus("Game này không có hệ thống Ticket Quest.", "warn")
             return
         end
-        local ok = Farm.acceptQuest(Config.TicketDifficulty)
-        setStatus(ok and "Đã gửi yêu cầu nhận quest." or "Không nhận được quest (thiếu NPC/executor API).",
+        teleportFacingNPC()
+        task.wait(0.5)
+        local ok = Farm.interactWithNPC(Config.TicketDifficulty)
+        setStatus(ok and "Đã tương tác nhận quest thành công." or "Không nhận được quest (thiếu NPC/executor API).",
             ok and "ok" or "warn")
     end)
     actionButton(p, "🎟 Nhận thưởng Vé quay ngay", C.warn, function()
@@ -2151,7 +2591,7 @@ do
 end
 
 ----------------------------------------------------------------
--- Dragging
+-- Dragging (Hỗ trợ cả Chuột & Cảm ứng + Chống tràn màn hình)
 ----------------------------------------------------------------
 local dragging = false
 local dragStart, startPosition
@@ -2171,13 +2611,13 @@ connect(UserInputService.InputChanged, function(input)
         or input.UserInputType == Enum.UserInputType.Touch
     ) then
         local delta = input.Position - dragStart
-        local s = uiScale.Scale
         frame.Position = UDim2.new(
             startPosition.X.Scale,
-            startPosition.X.Offset + delta.X / s,
+            startPosition.X.Offset + delta.X,
             startPosition.Y.Scale,
-            startPosition.Y.Offset + delta.Y / s
+            startPosition.Y.Offset + delta.Y
         )
+        clampFramePosition()
     end
 end)
 
@@ -2191,23 +2631,22 @@ end)
 ----------------------------------------------------------------
 -- Minimize / close / hotkey
 ----------------------------------------------------------------
-local minimized = false
-
 minimize.MouseButton1Click:Connect(function()
     minimized = not minimized
-    tabBar.Visible = not minimized
+    tabBarContainer.Visible = not minimized
     pageArea.Visible = not minimized
     statusBar.Visible = not minimized
     frame.Size = minimized
-        and UDim2.fromOffset(WIDTH, TITLE_H)
-        or UDim2.fromOffset(WIDTH, HEIGHT)
+        and UDim2.fromOffset(curWidth, TITLE_H)
+        or UDim2.fromOffset(curWidth, curHeight)
     minimize.Text = minimized and "+" or "–"
+    task.defer(clampFramePosition)
 end)
 
 local function destroyGui()
-    -- dừng toàn bộ vòng lặp farm / hop
     genv._ACTIVE_FARM_RUNNER = nil
-    Config.AutoFish, Config.AutoSkill, Config.TicketQuestEnabled = false, false, false
+    Config.AutoFish, Config.AutoSkill, Config.TicketQuestEnabled, Config.BoostFps = false, false, false, false
+    restoreFpsProperties()
     for _, c in ipairs(connections) do
         c:Disconnect()
     end
@@ -2224,11 +2663,19 @@ connect(UserInputService.InputBegan, function(input, processed)
         or input.KeyCode == Enum.KeyCode.RightControl
         or input.KeyCode == Enum.KeyCode.Insert then
         frame.Visible = not frame.Visible
+        updateFloatBtnVisual()
     end
 end)
 
 ----------------------------------------------------------------
 -- Start
 ----------------------------------------------------------------
+updateResponsiveLayout()
+updateTabSizes()
 selectTab("Server")
-setStatus("Ready. Press RightShift to hide/show.", nil)
+setStatus(
+    UserInputService.TouchEnabled
+        and "Ready. Chạm nút '🎣 Hub' để ẩn/hiện."
+        or "Ready. Nhấn RightShift hoặc nút '🎣 Hub' để ẩn/hiện.",
+    nil
+)
